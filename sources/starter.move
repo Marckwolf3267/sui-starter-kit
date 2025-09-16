@@ -1,83 +1,83 @@
 module starter::PasswordGen {
-
-    // 'state' es el valor interno que cambia con cada llamada para producir
-    // el siguiente número.
-    // La habilidad 'drop' permite que el compilador descarte esta estructura
-    // automáticamente cuando ya no es necesaria, previniendo errores de
-    // gestión de recursos.
+    // Importa el módulo 'debug' de la biblioteca estándar de Sui.
+    // 'debug::print' es una herramienta de depuración que nos permite
+    // imprimir valores en la consola durante las pruebas, lo cual es
+    // útil para verificar el funcionamiento del código.
+    use std::debug;
+    
+    // ----------------------------
+    // PRNG (Generador de Números Pseudoaleatorios)
+    // ----------------------------
+    
+    // Esta es la estructura que define nuestro generador de números aleatorios.
+    // - `state`: Es un número de 64 bits que cambia con cada generación para
+    //   producir el siguiente número aleatorio.
+    // - `has drop`: Es una habilidad que le dice al compilador de Move que
+    //   esta estructura puede ser "descartada" de forma segura cuando ya no
+    //   se necesita.
     public struct XorShift64 has drop {
         state: u64
     }
 
-    // Inicializa el generador PRNG con una semilla.
-    // Si la semilla es 0, usa un valor predeterminado para asegurar que no se
-    // genere una secuencia predecible desde el inicio.
+    // Inicializa el generador de números aleatorios.
+    // - `seed`: Es un número inicial. Si dos generadores se inician con la
+    //   misma semilla, producirán la misma secuencia de números aleatorios.
+    //   Si la semilla es 0, se usa un valor predeterminado para evitar
+    //   una secuencia trivial.
     public fun init_prng(seed: u64): XorShift64 {
         let st = if (seed == 0) { 0x9E3779B97F4A7C15u64 } else { seed };
         XorShift64 { state: st }
     }
 
-    // Genera el siguiente número pseudoaleatorio de 64 bits.
-    // Implementa el algoritmo xorshift64.
+    // Genera el siguiente número aleatorio de 64 bits.
+    // Este algoritmo es el "XorShift".
+    // no seguro para usos criptográficos.
     public fun next_u64(r: &mut XorShift64): u64 {
         let mut x = r.state;
+        // Los 'xor shifts' son operaciones bit a bit que mezclan los bits
+        // de una manera que parece aleatoria.
         x = x ^ (x << 13);
         x = x ^ (x >> 7);
         x = x ^ (x << 17);
-        r.state = x;
+        r.state = x; // Se actualiza el estado para la siguiente llamada
         x
     }
 
-    // Genera un número pseudoaleatorio dentro de un límite ('bound').
-    // Usa la operación de módulo (%) para asegurar que el resultado esté
-    // en el rango de 0 a `bound - 1`.
+    // Genera un número aleatorio dentro de un rango específico.
+    // Por ejemplo, si el `bound` es 10, esta función devolverá un número
+    // entre 0 y 9.
     fun next_bounded(r: &mut XorShift64, bound: u64): u64 {
         let v = next_u64(r);
-        v % bound
+        v % bound // El operador de módulo asegura que el resultado esté dentro del rango
     }
 
-    // Construye un vector de bytes que representa el conjunto de caracteres
-    // para la contraseña, basado en los parámetros de entrada.
+    // ----------------------------
+    // Construcción del Conjunto de Caracteres 
+    // ----------------------------
+
+    // Crea un vector de bytes que contiene todos los caracteres permitidos para la contraseña
     public fun build_charset(use_lower: bool, use_upper: bool, use_digits: bool, use_symbols: bool, avoid_ambiguous: bool): vector<u8> {
-        // Se inicializa un vector vacío para almacenar el conjunto de caracteres.
         let mut out = vector::empty<u8>();
         
-        // Se añaden los caracteres según los parámetros.
+        // Se añaden los caracteres de cada categoría si el parámetro es `true`.
         if (use_lower) {
             let lower = b"abcdefghijklmnopqrstuvwxyz";
-            let mut i = 0;
-            while (i < vector::length(&lower)) {
-                vector::push_back(&mut out, *vector::borrow(&lower, i));
-                i = i + 1;
-            };
+            vector::append(&mut out, lower);
         };
         if (use_upper) {
             let upper = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-            let mut i = 0;
-            while (i < vector::length(&upper)) {
-                vector::push_back(&mut out, *vector::borrow(&upper, i));
-                i = i + 1;
-            };
+            vector::append(&mut out, upper);
         };
         if (use_digits) {
             let digits = b"0123456789";
-            let mut i = 0;
-            while (i < vector::length(&digits)) {
-                vector::push_back(&mut out, *vector::borrow(&digits, i));
-                i = i + 1;
-            };
+            vector::append(&mut out, digits);
         };
         if (use_symbols) {
             let syms = b"!#$%&()*+,-./:;<=>?@[]^_{|}~";
-            let mut i = 0;
-            while (i < vector::length(&syms)) {
-                vector::push_back(&mut out, *vector::borrow(&syms, i));
-                i = i + 1;
-            };
+            vector::append(&mut out, syms);
         };
 
-        // Si 'avoid_ambiguous' es verdadero, se eliminan los caracteres
-        // que pueden confundirse (como '0' y 'O').
+        // Si se pide evitar caracteres ambiguos, se eliminan del conjunto.
         if (avoid_ambiguous) {
             let ambiguous = b"0OIl1";
             let mut filtered = vector::empty<u8>();
@@ -95,7 +95,8 @@ module starter::PasswordGen {
         }
     }
 
-    // Comprueba si un vector de bytes contiene un byte específico.
+    // Una función auxiliar que comprueba si un byte específico está presente
+    // en un vector de bytes.
     fun contains_byte(v: &vector<u8>, b: u8): bool {
         let mut i = 0;
         while (i < vector::length(v)) {
@@ -107,8 +108,12 @@ module starter::PasswordGen {
         false
     }
 
-    // Genera una contraseña con una longitud y un conjunto de caracteres
-    // dados, usando el PRNG.
+    // ----------------------------
+    // Generación de Contraseña
+    // ----------------------------
+    
+    // Genera una contraseña aleatoria de una longitud dada, usando el PRNG
+    // y el conjunto de caracteres.
     public fun generate_password(prng: &mut XorShift64, length: u64, charset: &vector<u8>): vector<u8> {
         // Se asegura de que el conjunto de caracteres no esté vacío.
         let charset_len = vector::length(charset);
@@ -117,7 +122,8 @@ module starter::PasswordGen {
         let mut out = vector::empty<u8>();
         let mut i = 0u64;
         while (i < length) {
-            // Selecciona un carácter aleatorio del conjunto y lo añade a la contraseña.
+            // Elige un índice aleatorio dentro del conjunto de caracteres
+            // y añade ese carácter a la contraseña.
             let idx = next_bounded(prng, charset_len);
             let cb = *vector::borrow(charset, idx);
             vector::push_back(&mut out, cb);
@@ -126,10 +132,9 @@ module starter::PasswordGen {
         out
     }
 
-    // Genera una contraseña con una política específica:
-    // asegura que la contraseña contenga al menos una letra minúscula, una
-    // letra mayúscula, un dígito y un símbolo. Luego, el resto de los
-    // caracteres se generan de forma aleatoria.
+    // Genera una contraseña con una "política de seguridad".
+    // Esto asegura que la contraseña contenga al menos un carácter de cada
+    // (minuscula, mayuscula, dígito, símbolo).
     public fun generate_with_policy(prng: &mut XorShift64, length: u64): vector<u8> {
         assert!(length >= 4, 2);
         let lower = b"abcdefghijklmnopqrstuvwxyz";
@@ -138,16 +143,16 @@ module starter::PasswordGen {
         let syms = b"!#$%&()*+,-./:;<=>?@[]^_{|}~";
 
         let mut out = vector::empty<u8>();
-        // Añade un carácter de cada categoría para asegurar la política.
+        // Añade un carácter aleatorio de cada categoría primero.
         vector::push_back(&mut out, *vector::borrow(&lower, next_bounded(prng, vector::length(&lower))));
         vector::push_back(&mut out, *vector::borrow(&upper, next_bounded(prng, vector::length(&upper))));
         vector::push_back(&mut out, *vector::borrow(&digits, next_bounded(prng, vector::length(&digits))));
         vector::push_back(&mut out, *vector::borrow(&syms, next_bounded(prng, vector::length(&syms))));
 
-        // Construye el conjunto de caracteres completo para el resto de la contraseña.
         let full = build_charset(true, true, true, true, false);
 
-        // Añade el resto de caracteres para alcanzar la longitud deseada.
+        // Rellena el resto de la contraseña con caracteres aleatorios del
+        // conjunto completo.
         let mut remaining = length - 4;
         while (remaining > 0) {
             let idx = next_bounded(prng, vector::length(&full));
@@ -155,8 +160,8 @@ module starter::PasswordGen {
             remaining = remaining - 1;
         };
 
-        // Mezcla los caracteres de forma aleatoria (Fisher-Yates) para que no
-        // se sigan los primeros 4 caracteres.
+        // Mezcla los caracteres para que el orden sea completamente aleatorio
+        // y la contraseña no empiece siempre con un patrón fijo.
         let n = vector::length(&out);
         let mut j = n;
         while (j > 1) {
@@ -169,24 +174,29 @@ module starter::PasswordGen {
         out
     }
 
-    // Una función de ejemplo para demostrar cómo se usa la lógica de generación.
-    // Devuelve el vector de bytes de la contraseña.
+    // ----------------------------
+    // Pruebas
+    // ----------------------------
+    
+    // Una función de ejemplo pública que usa las funciones de generación
+    // para crear una contraseña. Al ser pública, puede ser llamada
+    // desde otras partes del código o desde el entorno de ejecución.
     public fun demo_example(): vector<u8> {
         let mut prng = init_prng(0x12345678u64);
         let charset = build_charset(true, true, true, true, true);
         generate_password(&mut prng, 16u64, &charset)
     }
 
-    // Función de prueba que muestra el resultado de la generación de la contraseña.
-    // #[test] es una anotación especial que le dice al compilador de Move que
-    // esta función es una prueba unitaria.
+    // Esta función de prueba se usa para verificar que el código funciona.
+    // La anotación `#[test]` le dice a Move que es una prueba unitaria y
+    // debe ser ejecutada por el comando `sui move test`.
     #[test]
     fun test_generate_password() {
-        // Llama a la función de ejemplo para generar la contraseña.
+        // Llama a la función de ejemplo para obtener la contraseña.
         let password = demo_example();
         
-        // Imprime el vector de bytes de la contraseña en la salida de la prueba.
-        // Esto permite ver el resultado en la consola al ejecutar 'sui move test'.
+        // Imprime el resultado en la consola de depuración. Este es el
+        // paso clave para ver la contraseña al ejecutar las pruebas.
         debug::print(&password);
     }
 }
